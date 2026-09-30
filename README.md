@@ -39,7 +39,7 @@ Omarchy host (QEMU/KVM + libvirt)
 | 1. Build Wazuh VM (Ubuntu 24.04, dual NIC) | ✅ Done |
 | 2. Install Wazuh all-in-one (4.14.8) | ✅ Done |
 | 3. Enroll agents (Kali, target) | ✅ Done |
-| 4. Attack & detect | ⏳ |
+| 4. Attack & detect | 🔵 4/5 attacks detected |
 | 5. Custom detection rules | ⏳ |
 | 6. Final write-up & screenshots | ⏳ |
 

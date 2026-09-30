@@ -295,4 +295,107 @@ sudo virsh snapshot-create-as mr.axe wazuh-agent-installed "CTF box with Wazuh a
 
 ---
 
-## Phase 4 — Attack & detect ⏳
+## Phase 4 — Attack & detect (2026-09-30) — 4/5 done
+
+### 4.1 Enter "play" state
+
+Isolate the lab before attacking: both internet-facing NICs down, Wazuh's dashboard NIC stays up.
+
+```bash
+# OMARCHY — bring target's management NIC down (MAC of its 'default' NIC)
+sudo virsh domif-setlink mr.axe 52:54:00:9e:e6:80 down
+```
+```bash
+# KALI — disable internet NIC, verify isolation
+sudo ip link set eth0 down
+ping -c2 8.8.8.8      # fails  → no internet
+ping -c2 10.66.66.20  # replies → reaches target
+ping -c2 10.66.66.30  # replies → reaches Wazuh
+```
+
+Agents keep reporting during play because they talk to Wazuh over `ctf-isolated` (10.66.66.30), which stays up.
+
+> [!NOTE] Trade-off
+> With the target's mgmt NIC down, there's no SSH to mr-axe during play. That's fine for attacking (everything is driven from Kali), but any config change on the target means briefly bringing the mgmt NIC back up.
+
+### 4.2 Attack 1 — Port scan → detected ✅
+
+```bash
+# KALI
+sudo nmap -sS -sV -p- 10.66.66.20      # open: 22/ssh, 80/http
+```
+Wazuh: spike of activity on the mr-axe agent; SCA/CIS re-evaluation (rules 19004/19007/19008) and connection activity. MITRE mapping surfaced (Remote Services, SSH).
+
+### 4.3 Attack 2 — SSH brute force → detected ✅
+
+```bash
+# KALI
+hydra -l labadmin -P /usr/share/wordlists/rockyou.txt -t 4 -f ssh://10.66.66.20
+```
+Wazuh escalated correctly:
+- **5760** (level 5) — individual `sshd: authentication failed`
+- **5763** (level 10) — `sshd: brute force trying to get access` — correlation rule
+- **2502** (level 10) — `syslog: user missed the password more than one time`
+
+The 5763 rule logic (from its definition): **8 failures / 120 s / same source IP** → escalate. MITRE T1110 (Brute Force), mapped to PCI DSS, HIPAA, NIST.
+
+> [!TIP] Reading the source IP matters
+> An early 5760 alert turned out to be sourced from the **host** (192.168.122.1) during setup, not Kali. The SIEM logs everything — always check `data.srcip` before attributing an alert.
+
+### 4.4 Attack 3 — Web attack → detected ✅ (after real troubleshooting)
+
+```bash
+# KALI
+gobuster dir -u http://10.66.66.20 -w /usr/share/wordlists/dirb/common.txt -t 20
+```
+Result: **2,031 alerts** —
+- **31101** (level 5) — `Web server 400 error code` (every 404 from the wordlist)
+- **31151** (level 10) — `Multiple web server 400 error codes from same source ip` (correlation)
+
+> [!WARNING] Lesson learned — Wazuh only watches logs you tell it to
+> The web attack produced **zero** alerts at first. Root cause chain:
+> 1. The Wazuh Linux agent does **not** monitor Apache logs by default (SSH worked only because it's read via journald).
+> 2. First fix pointed FIM/logcollector at `/var/log/apache2/access.log` — still nothing.
+> 3. `access.log` was **empty**: the CTF's vhost (`project-zero.conf`) logs to a **custom path**, `CustomLog .../project-zero-access.log`.
+> 4. Repeated `sed` edits left **duplicate / malformed `<localfile>` blocks** (some missing `<location>`), which crashed the agent.
+> 5. Final fix: rewrote `ossec.conf` cleanly with **one** correct block pointing at `project-zero-access.log`, then re-tested.
+>
+> Takeaway: confirm the *actual* log path (`apachectl -S`), verify the file is being written (`curl` + `tail`), and validate config changes instead of blind-appending.
+
+Correct FIM/log block added to the target's `ossec.conf`:
+```xml
+<localfile>
+  <log_format>apache</log_format>
+  <location>/var/log/apache2/project-zero-access.log</location>
+</localfile>
+```
+
+### 4.5 Attack 4 — File Integrity Monitoring → detected ✅
+
+```bash
+# DEBIAN (mr-axe) — modify a monitored file + drop a fake binary
+sudo bash -c 'echo "10.66.66.99 realtime-test-c2" >> /etc/hosts'
+sudo touch /usr/bin/realtime-backdoor
+```
+Wazuh:
+- **554** — `File added to the system` (`/usr/bin/realtime-backdoor`)
+- **550** — `Integrity checksum changed` (`/etc/hosts`)
+
+> [!WARNING] Lesson learned — default FIM is periodic, not realtime
+> Default syscheck scans every **12 h** (`frequency 43200`), and its scan of the listed dirs finishes in ~1 s, so edits made between scans produced no alerts. Manual `pkill -USR1` did not force a rescan reliably. Fix: enable realtime on the watched dirs:
+> ```xml
+> <directories realtime="yes">/etc,/usr/bin,/usr/sbin</directories>
+> ```
+> After restart, new changes were caught **instantly**.
+
+> [!TIP] Gotcha — agent went Disconnected
+> Running `wazuh-control restart` on the target right as the mgmt NIC was dropped left the agent `Disconnected` and its scan killed mid-run. Restart the agent, confirm `agent_control -i 001` shows **Active**, and only then drop the NIC.
+
+### 4.6 Still to do (Phase 4)
+- Attack 5 — write a **custom detection rule** for something the default ruleset misses.
+- Collect screenshots into `screenshots/` (01-portscan, 02-ssh-bruteforce, 03-web-attack, 04-fim).
+
+---
+
+## Phase 5 — Custom detection rules ⏳
+## Phase 6 — Final write-up & screenshots ⏳
