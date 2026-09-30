@@ -1,0 +1,49 @@
+<!-- Local rules -->
+<!-- Copyright (C) 2015, Wazuh Inc. -->
+<!--
+  Custom detection rules for the Wazuh SOC Lab.
+  Rule IDs must be >= 100000 (the range reserved for user rules).
+  Deployed on the Wazuh MANAGER at /var/ossec/etc/rules/local_rules.xml,
+  then loaded with: sudo systemctl restart wazuh-manager
+  Validate before restarting with: /var/ossec/bin/wazuh-logtest
+-->
+
+<!-- Default Wazuh example rule (ships with local_rules.xml, kept as-is) -->
+<group name="local,syslog,sshd,">
+  <rule id="100001" level="5">
+    <if_sid>5716</if_sid>
+    <srcip>1.1.1.1</srcip>
+    <description>sshd: authentication failed from IP 1.1.1.1.</description>
+    <group>authentication_failed,pci_dss_10.2.4,pci_dss_10.2.5,</group>
+  </rule>
+</group>
+
+<!--
+  Custom rule: alert on access to a known-vulnerable endpoint.
+
+  The lab's target hosts a deliberately vulnerable PHP page (diag.php)
+  used for command injection. Wazuh's default web rules only flag generic
+  400/404 patterns; they do NOT know that diag.php is sensitive in THIS
+  environment. This rule adds that environment-specific knowledge — the
+  kind of SIEM tuning a SOC does for its own crown-jewel endpoints.
+
+  - id 100100        : user-rule range (>= 100000)
+  - if_group web     : only evaluated on events already decoded as web/apache (efficient)
+  - url diag.php     : matches any request whose URL contains diag.php
+  - level 10         : high severity
+  - MITRE T1190      : Exploit Public-Facing Application (Initial Access)
+
+  Validated with wazuh-logtest (matched, "Alert to be generated") and
+  confirmed firing live from the Kali attacker (4 alerts, srcip 10.66.66.10).
+-->
+<group name="web,attack,local,">
+  <rule id="100100" level="10">
+    <if_group>web</if_group>
+    <url>diag.php</url>
+    <description>Access attempt to known-vulnerable endpoint (diag.php) on mr-axe</description>
+    <mitre>
+      <id>T1190</id>
+    </mitre>
+    <group>attack,web_attack,</group>
+  </rule>
+</group>

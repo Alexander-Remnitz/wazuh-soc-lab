@@ -391,11 +391,91 @@ Wazuh:
 > [!TIP] Gotcha — agent went Disconnected
 > Running `wazuh-control restart` on the target right as the mgmt NIC was dropped left the agent `Disconnected` and its scan killed mid-run. Restart the agent, confirm `agent_control -i 001` shows **Active**, and only then drop the NIC.
 
-### 4.6 Still to do (Phase 4)
-- Attack 5 — write a **custom detection rule** for something the default ruleset misses.
-- Collect screenshots into `screenshots/` (01-portscan, 02-ssh-bruteforce, 03-web-attack, 04-fim).
+### 4.6 Attack 5 — Custom detection rule → detected ✅
+
+The first four attacks proved the **default** ruleset detects generic activity.
+Attack 5 shows **detection engineering**: writing a rule for something the
+defaults don't know about — a sensitive endpoint specific to *this* environment.
+
+The target hosts a deliberately vulnerable PHP page, `diag.php` (command
+injection). Wazuh's default web rules only flag generic 400/404 patterns; they
+have no concept that `diag.php` is a crown-jewel endpoint here. So we add that
+knowledge as a custom rule.
+
+**Rules live on the MANAGER**, not the agent — `/var/ossec/etc/rules/local_rules.xml`.
+
+```xml
+<group name="web,attack,local,">
+  <rule id="100100" level="10">
+    <if_group>web</if_group>
+    <url>diag.php</url>
+    <description>Access attempt to known-vulnerable endpoint (diag.php) on mr-axe</description>
+    <mitre>
+      <id>T1190</id>
+    </mitre>
+    <group>attack,web_attack,</group>
+  </rule>
+</group>
+```
+- **id 100100** — user-rule range (must be ≥ 100000).
+- **`if_group web`** — only evaluated on already-decoded web events (efficient).
+- **level 10**, **MITRE T1190** (Exploit Public-Facing Application, Initial Access).
+
+**Validate before loading** — `wazuh-logtest` tests a rule safely without a restart:
+```bash
+# WAZUH
+echo '10.66.66.10 - - [30/Sep/2026:10:00:00 +0000] "GET /login/diag.php HTTP/1.1" 200 100 "-" "curl/8.0"' \
+  | sudo /var/ossec/bin/wazuh-logtest
+```
+Output confirmed: decoded `url: /login/diag.php`, then **Phase 3 matched rule 100100 / level 10**, MITRE T1190 → "Alert to be generated."
+
+**Load and trigger:**
+```bash
+# WAZUH
+sudo systemctl restart wazuh-manager
+
+# KALI
+curl -s -o /dev/null "http://10.66.66.20/login/diag.php"
+curl -s -o /dev/null "http://10.66.66.20/login/diag.php?cmd=id"
+```
+Dashboard (`rule.id: 100100`): **4 live alerts**, level 10, from mr-axe — the custom rule firing on real requests from the Kali attacker.
+
+> [!TIP] Workflow that works
+> write rule → `wazuh-logtest` → restart manager → trigger → confirm in dashboard.
+> Always logtest first: it catches XML errors without restarting the manager.
+
+### 4.7 Detection summary
+
+| # | Attack (from Kali) | Key rule(s) | Max level |
+|---|---|---|---|
+| 1 | Port scan (nmap) | SCA/CIS re-eval (19004/7/8) | 7 |
+| 2 | SSH brute force (hydra) | 5763 brute force, 2502 | 10 |
+| 3 | Web dir brute force (gobuster) | 31101, 31151 | 10 |
+| 4 | File integrity (tamper `/etc/hosts`, drop binary) | 550, 554 | 7 |
+| 5 | Access to `diag.php` | **100100 (custom)** | 10 |
 
 ---
 
-## Phase 5 — Custom detection rules ⏳
-## Phase 6 — Final write-up & screenshots ⏳
+## Phase 5 — Deliverables committed ✅
+
+- `rules/local_rules.xml` — the custom rule, committed to the repo.
+- `configs/agent-ossec-snippets.conf` — the Apache-log + realtime-FIM additions
+  made on the target agent (sanitized).
+- `screenshots/` — dashboard evidence per attack (01–05).
+
+---
+
+## Phase 6 — Finalize ✅
+
+- README polished; project status table completed.
+- Repository made **public** (contains no secrets — verified against `.gitignore`).
+- Obsidian notes written to the vault, matching the CTF project's note style.
+- CTF project docs updated to record that the target now runs a Wazuh agent.
+
+### What this project demonstrates
+- Standing up a full SIEM (Wazuh all-in-one) on an isolated network.
+- Enrolling agents and proving traffic stays on the isolated segment.
+- Detecting five distinct attack types, mapped to MITRE ATT&CK.
+- **Writing and validating a custom detection rule** (detection engineering).
+- Real troubleshooting: wrong Apache log path, periodic-vs-realtime FIM,
+  credential hygiene, agent connectivity — documented honestly.
