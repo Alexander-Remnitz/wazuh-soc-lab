@@ -32,17 +32,26 @@ Omarchy host (QEMU/KVM + libvirt)
 
 ## Detections
 
-Five attacks launched from Kali against the target, each detected in Wazuh:
+Attacks launched from Kali against the target, and what Wazuh saw:
 
-| # | Attack | Tool | Key rule(s) | Max level | MITRE |
-|---|---|---|---|---|---|
-| 1 | Port scan | `nmap` | SCA/CIS re-eval (19004/7/8) | 7 | Remote Services |
-| 2 | SSH brute force | `hydra` | 5763 (brute force), 2502 | 10 | T1110 Brute Force |
-| 3 | Web dir brute force | `gobuster` | 31101, 31151 (correlation) | 10 | Web attack |
-| 4 | File integrity tamper | manual | 550 (checksum), 554 (new file) | 7 | Persistence |
-| 5 | Vuln endpoint access | `curl` | **100100 (custom rule)** | 10 | T1190 Exploit Public-Facing App |
+| Attack | Tool | Detected? | Key rule(s) | MITRE |
+|---|---|---|---|---|
+| SSH brute force | `hydra` | ✅ Yes | 5763 (correlation), 2502 | T1110 Brute Force |
+| Web dir brute force | `gobuster` | ✅ Yes | 31101 → 31151 (correlation) | Web attack |
+| Access to vuln endpoint | `curl` | ✅ Yes (**custom rule**) | 100100 | T1190 Exploit Public-Facing App |
+| File tamper / SUID set | manual | ✅ Yes (realtime FIM) | 554 (new file), 550 (perms → SUID) | T1565.001 |
+| Privileged command | `sudo` | ✅ Yes | 5402 (sudo to root, full command logged) | T1548.003 |
+| Port scan | `nmap` | ❌ **No** | — | — |
 
-Evidence for each is in [`screenshots/`](screenshots/). The custom rule is in [`rules/local_rules.xml`](rules/local_rules.xml).
+**Honest note on the port scan:** Wazuh is **host-based** — it reads logs on the
+endpoint, it has no network sensor. So a raw port scan doesn't generate a Wazuh
+alert (the activity seen during nmap was routine CIS/SCA config re-checks, not
+scan detection). Catching network-level recon would require a network IDS such
+as **Suricata** feeding Wazuh. This is a deliberate limitation of the
+architecture, called out here rather than glossed over.
+
+Evidence for each detection is in [`screenshots/`](screenshots/). The custom rule
+is in [`rules/local_rules.xml`](rules/local_rules.xml).
 
 ## Custom detection rule
 

@@ -318,13 +318,25 @@ Agents keep reporting during play because they talk to Wazuh over `ctf-isolated`
 > [!NOTE] Trade-off
 > With the target's mgmt NIC down, there's no SSH to mr-axe during play. That's fine for attacking (everything is driven from Kali), but any config change on the target means briefly bringing the mgmt NIC back up.
 
-### 4.2 Attack 1 — Port scan → detected ✅
+### 4.2 Attack 1 — Port scan → NOT detected (a real limitation) ❌
 
 ```bash
 # KALI
 sudo nmap -sS -sV -p- 10.66.66.20      # open: 22/ssh, 80/http
 ```
-Wazuh: spike of activity on the mr-axe agent; SCA/CIS re-evaluation (rules 19004/19007/19008) and connection activity. MITRE mapping surfaced (Remote Services, SSH).
+
+**Honest result: Wazuh did not detect the scan.** Wazuh is **host-based** — it
+analyses logs on the endpoint and has no network sensor, so a raw SYN scan
+produces no Wazuh alert. The activity that appeared on the mr-axe agent during
+the nmap window was routine **CIS/SCA configuration re-checks** (rules
+19004/19007/19008), not scan detection — correlation, not causation.
+
+> [!NOTE] Architectural gap (worth stating, not hiding)
+> Detecting network-level reconnaissance (port scans, sweeps) needs a **network
+> IDS** such as Suricata or Zeek feeding Wazuh, or firewall/connection logs
+> shipped to the agent. This lab is host-based by design, so that class of
+> attack is out of scope for it — a good example of knowing what your tooling
+> can and cannot see.
 
 ### 4.3 Attack 2 — SSH brute force → detected ✅
 
@@ -446,13 +458,17 @@ Dashboard (`rule.id: 100100`): **4 live alerts**, level 10, from mr-axe — the 
 
 ### 4.7 Detection summary
 
-| # | Attack (from Kali) | Key rule(s) | Max level |
+| Attack (from Kali) | Detected? | Key rule(s) | Max level |
 |---|---|---|---|
-| 1 | Port scan (nmap) | SCA/CIS re-eval (19004/7/8) | 7 |
-| 2 | SSH brute force (hydra) | 5763 brute force, 2502 | 10 |
-| 3 | Web dir brute force (gobuster) | 31101, 31151 | 10 |
-| 4 | File integrity (tamper `/etc/hosts`, drop binary) | 550, 554 | 7 |
-| 5 | Access to `diag.php` | **100100 (custom)** | 10 |
+| SSH brute force (hydra) | ✅ | 5763 brute force, 2502 | 10 |
+| Web dir brute force (gobuster) | ✅ | 31101 → 31151 | 10 |
+| Access to `diag.php` | ✅ (custom) | **100100** | 10 |
+| File tamper + SUID bit set | ✅ (realtime FIM) | 554, 550 (perm → SUID) | 7 |
+| Privileged command (`sudo`) | ✅ | 5402 (full command logged) | 3 |
+| Port scan (nmap) | ❌ | — (host-based SIEM, no network sensor) | — |
+
+Honest framing: five attack *techniques* detected, one class (network scanning)
+**not** — because Wazuh is host-based. See 4.2 for the architectural reason.
 
 ---
 
