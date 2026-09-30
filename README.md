@@ -92,7 +92,7 @@ wazuh-soc-lab/
 
 ## Related projects
 
-- **AI SOC Bot** *(planned)* — a local, private AI (Ollama) that triages the alerts produced by this lab.
+- **[AI SOC Bot](https://github.com/Alexander-Remnitz/ai-soc-bot)** — a local, private AI (Ollama) that triages the alerts produced by this lab. This lab *detects*; the bot *automates the triage*.
 
 ## Disclaimer
 
