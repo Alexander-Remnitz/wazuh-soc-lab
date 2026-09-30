@@ -132,4 +132,79 @@ Snapshot `base-ubuntu-clean` = clean restore point before Wazuh is installed.
 
 ---
 
-## Phase 2 — Install Wazuh ⏳
+## Phase 2 — Install Wazuh (2026-09-30) ✅
+
+### 2.1 Run the all-in-one installer
+
+```bash
+# WAZUH
+tmux new -s wazuh
+curl -sO https://packages.wazuh.com/4.14/wazuh-install.sh && sudo bash ./wazuh-install.sh -a
+```
+
+- Installs **Wazuh 4.14.8**: indexer → server (manager + Filebeat) → dashboard, all on one host.
+- Took ~15 minutes. The indexer step is the slowest and prints nothing for several minutes — that's normal.
+- Run inside **`tmux`** so an SSH drop can't kill the install (`tmux attach -t wazuh` to reconnect).
+- The installer creates `wazuh-install-files.tar`, which contains **all generated passwords** → excluded via `.gitignore`, never committed.
+
+### 2.2 Post-install hardening
+
+```bash
+# WAZUH
+sudo chmod 600 ~/wazuh-install-files.tar                            # restrict the password archive
+sudo sed -i "s/^deb /#deb /" /etc/apt/sources.list.d/wazuh.list     # stop accidental Wazuh upgrades
+sudo apt update
+```
+
+Disabling the Wazuh repo is recommended by Wazuh: an unplanned upgrade of one component can break the stack.
+
+### 2.3 Dashboard login
+
+Dashboard: `https://192.168.122.123` (self-signed certificate → browser warning is expected).
+
+> [!TIP] Gotcha — username is case-sensitive
+> `Admin` fails with "Invalid username or password"; it must be `admin`.
+
+> [!TIP] Gotcha — copying passwords from tmux
+> Generated passwords contain `*`, `+`, `.`, `?`. Copying from a tmux pane can add spaces or line breaks. Reliable source:
+> ```bash
+> sudo tar -O -xf ~/wazuh-install-files.tar wazuh-install-files/wazuh-passwords.txt | grep -A1 "indexer_username: 'admin'"
+> ```
+
+### 2.4 Rotate the admin password
+
+```bash
+# WAZUH
+sudo bash /usr/share/wazuh-indexer/plugins/opensearch-security/tools/wazuh-passwords-tool.sh -u admin
+sudo systemctl restart filebeat wazuh-manager wazuh-dashboard
+```
+
+- Omitting `-p` makes the tool **generate a random password**, so it never lands in shell history.
+- On all-in-one, the tool also updates Filebeat's keystore automatically.
+
+> [!WARNING] Lesson learned — credential hygiene
+> The password was accidentally exposed twice (visible in a screenshot, then in pasted terminal output) and had to be rotated each time. Rule going forward: **scan every screenshot/paste for passwords and redact before sharing.**
+
+### 2.5 Verification
+
+```bash
+# WAZUH
+sudo systemctl is-active wazuh-indexer wazuh-manager filebeat wazuh-dashboard   # → active ×4
+```
+
+| Check | Result |
+|---|---|
+| All 4 services | active ✅ |
+| Dashboard login with rotated password | ✅ |
+| Baseline alerts (no agents yet) | ~320 medium/low — the manager monitors **its own host**, so installs, package changes and logins already generate events |
+
+### 2.6 Snapshot
+
+```bash
+# OMARCHY
+sudo virsh snapshot-create-as wazuh-soc wazuh-installed "Wazuh 4.14.8 all-in-one installed, admin password rotated"
+```
+
+---
+
+## Phase 3 — Enroll agents ⏳
