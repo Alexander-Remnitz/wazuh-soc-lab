@@ -207,4 +207,92 @@ sudo virsh snapshot-create-as wazuh-soc wazuh-installed "Wazuh 4.14.8 all-in-one
 
 ---
 
-## Phase 3 — Enroll agents ⏳
+## Phase 3 — Enroll agents (2026-09-30) ✅
+
+### 3.1 RAM budget (16 GB host)
+
+With everything running, RAM is the main constraint:
+
+| VM | RAM |
+|---|---|
+| Wazuh server | 8 GB |
+| Target (mr-axe) | 1 GB |
+| Kali | **2.5 GB** (reduced from 4 GB) |
+| Omarchy host + browser | remainder |
+
+```bash
+# OMARCHY — lower Kali's RAM (VM must be off; persists across boots)
+sudo virsh setmem kali-redteam 2560M --config
+sudo virsh setmaxmem kali-redteam 2560M --config
+```
+
+> [!TIP]
+> During lab sessions, close heavy browser tabs and keep only the Wazuh dashboard open.
+
+### 3.2 Install the agent (same on both endpoints)
+
+```bash
+# DEBIAN (mr-axe) / KALI — via each VM's internet-facing NIC
+sudo apt-get update
+sudo apt-get install -y gnupg apt-transport-https curl
+curl -s https://packages.wazuh.com/key/GPG-KEY-WAZUH | sudo gpg --no-default-keyring --keyring gnupg-ring:/usr/share/keyrings/wazuh.gpg --import && sudo chmod 644 /usr/share/keyrings/wazuh.gpg
+echo "deb [signed-by=/usr/share/keyrings/wazuh.gpg] https://packages.wazuh.com/4.x/apt/ stable main" | sudo tee /etc/apt/sources.list.d/wazuh.list
+sudo apt-get update
+
+sudo WAZUH_MANAGER="10.66.66.30" WAZUH_AGENT_NAME="<agent-name>" apt-get install -y wazuh-agent=4.14.8-1
+sudo systemctl daemon-reload
+sudo systemctl enable --now wazuh-agent
+
+sudo sed -i "s/^deb /#deb /" /etc/apt/sources.list.d/wazuh.list   # prevent accidental agent upgrades
+sudo apt-get update
+```
+
+Design decisions:
+- **`WAZUH_MANAGER="10.66.66.30"`** — agents report over the isolated lab network, not the NAT network.
+- **Pinned to `4.14.8-1`** — Wazuh only guarantees compatibility when the agent is **not newer** than the manager.
+- **Repo disabled afterwards** — same reason as on the server.
+
+### 3.3 Verification
+
+**Enrolled agents:**
+```bash
+# WAZUH
+sudo /var/ossec/bin/agent_control -l
+```
+```text
+ID: 000, Name: wazuh (server), IP: 127.0.0.1, Active/Local
+ID: 001, Name: mr-axe, IP: any, Active
+ID: 002, Name: kali-redteam, IP: any, Active
+```
+(`IP: any` = the agent may connect from any address; normal for this enrollment method.)
+
+**Agent traffic really uses the lab network:**
+```bash
+# WAZUH
+sudo ss -tn state established '( sport = :1514 )'
+```
+```text
+10.66.66.30:1514   ←   10.66.66.20   (mr-axe)
+10.66.66.30:1514   ←   10.66.66.10   (kali-redteam)
+```
+Both agents connect over `ctf-isolated` ✅ — no agent traffic crosses the NAT network.
+
+### 3.4 Snapshots
+
+```bash
+# OMARCHY
+sudo virsh snapshot-create-as mr.axe pre-wazuh-agent "CTF box before installing Wazuh agent"
+sudo virsh snapshot-create-as mr.axe wazuh-agent-installed "CTF box with Wazuh agent 4.14.8 enrolled"
+```
+
+> [!WARNING] Gotcha — Kali can't take internal snapshots
+> `error: Operation not supported: internal snapshots of a VM with pflash based firmware require QCOW2 nvram format`
+>
+> The Kali VM boots with **UEFI** firmware whose NVRAM is stored as a raw file, and libvirt only supports internal snapshots of UEFI VMs when NVRAM is qcow2. Decision: **no snapshots for Kali** — it's the attacker machine, holds no lab state worth rolling back, and the agent can simply be removed with `apt purge wazuh-agent`. If needed later: cold-copy its disk while the VM is shut off.
+
+> [!NOTE] Impact on the CTF box
+> The target now runs a Wazuh agent (as real servers run EDR/SIEM agents). The CTF's own build docs and provisioning script should record this change.
+
+---
+
+## Phase 4 — Attack & detect ⏳
