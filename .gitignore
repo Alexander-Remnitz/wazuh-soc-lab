@@ -1,0 +1,25 @@
+# ── Wazuh secrets — NEVER commit ──────────────────────────
+# The installer creates this archive; it contains ALL admin passwords.
+wazuh-install-files.tar
+wazuh-passwords.txt
+*.tar
+
+# ── Credentials / keys / env ─────────────────────────────
+.env
+*.env
+*.key
+*.pem
+*.p12
+*secret*
+*password*
+
+# ── Large binaries ───────────────────────────────────────
+*.iso
+*.qcow2
+*.img
+
+# ── Editor / OS noise ────────────────────────────────────
+.obsidian/
+.DS_Store
+*.swp
+*~
