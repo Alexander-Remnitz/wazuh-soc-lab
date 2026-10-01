@@ -6,8 +6,9 @@ A home SOC (Security Operations Center) lab built on **Wazuh** — an open-sourc
 
 - Deploying a SIEM (Wazuh all-in-one: indexer, server, dashboard) on an isolated virtual network
 - Enrolling agents on an attacker machine (Kali) and a vulnerable target
-- Running five realistic attacks and **detecting each one**, mapped to MITRE ATT&CK
-- **Writing, validating and deploying a custom detection rule** (detection engineering)
+- Running realistic attacks and **detecting them across two layers** — host-based (Wazuh) and network-based (Suricata IDS) — mapped to MITRE ATT&CK
+- **Writing, validating and deploying custom detection content** — a Wazuh rule and a Suricata signature (detection engineering)
+- **Finding an architectural blind spot and closing it** (host-based SIEM couldn't see port scans → added a network IDS)
 - Honest troubleshooting notes — the problems hit and how they were fixed
 
 ## Architecture
@@ -41,14 +42,18 @@ Attacks launched from Kali against the target, and what Wazuh saw:
 | Access to vuln endpoint | `curl` | ✅ Yes (**custom rule**) | 100100 | T1190 Exploit Public-Facing App |
 | File tamper / SUID set | manual | ✅ Yes (realtime FIM) | 554 (new file), 550 (perms → SUID) | T1565.001 |
 | Privileged command | `sudo` | ✅ Yes | 5402 (sudo to root, full command logged) | T1548.003 |
-| Port scan | `nmap` | ❌ **No** | — | — |
+| Port scan | `nmap` | ✅ Yes (**via Suricata IDS**) | 86601 (Suricata) + custom sig 1000001 | T1046 Network Service Discovery |
 
-**Honest note on the port scan:** Wazuh is **host-based** — it reads logs on the
-endpoint, it has no network sensor. So a raw port scan doesn't generate a Wazuh
-alert (the activity seen during nmap was routine CIS/SCA config re-checks, not
-scan detection). Catching network-level recon would require a network IDS such
-as **Suricata** feeding Wazuh. This is a deliberate limitation of the
-architecture, called out here rather than glossed over.
+**The port scan — a gap I found, then closed.** Wazuh is **host-based** — it reads
+logs on the endpoint and has no packet visibility, so on its own it does **not**
+see a port scan (during nmap, the only host activity was routine CIS/SCA
+re-checks — not scan detection). Rather than leave that gap, I added **Suricata**
+(a network IDS) on the target, watching the lab interface. Suricata inspects the
+packets, a custom signature flags the SYN sweep, and its `eve.json` alerts are
+ingested by the Wazuh agent — so the scan now surfaces as Wazuh rule **86601**,
+with Kali (`10.66.66.10`) as the confirmed source. The lab now does **layered
+detection: host-based (Wazuh) + network-based (Suricata)**. See
+[`configs/suricata-notes.md`](configs/suricata-notes.md).
 
 Evidence for each detection is in [`screenshots/`](screenshots/). The custom rule
 is in [`rules/local_rules.xml`](rules/local_rules.xml).

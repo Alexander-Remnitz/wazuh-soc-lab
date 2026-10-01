@@ -318,25 +318,28 @@ Agents keep reporting during play because they talk to Wazuh over `ctf-isolated`
 > [!NOTE] Trade-off
 > With the target's mgmt NIC down, there's no SSH to mr-axe during play. That's fine for attacking (everything is driven from Kali), but any config change on the target means briefly bringing the mgmt NIC back up.
 
-### 4.2 Attack 1 — Port scan → NOT detected (a real limitation) ❌
+### 4.2 Attack 1 — Port scan → gap found, then closed with a network IDS ✅
 
 ```bash
 # KALI
-sudo nmap -sS -sV -p- 10.66.66.20      # open: 22/ssh, 80/http
+sudo nmap -sS -p- 10.66.66.20      # open: 22/ssh, 80/http
 ```
 
-**Honest result: Wazuh did not detect the scan.** Wazuh is **host-based** — it
-analyses logs on the endpoint and has no network sensor, so a raw SYN scan
-produces no Wazuh alert. The activity that appeared on the mr-axe agent during
-the nmap window was routine **CIS/SCA configuration re-checks** (rules
-19004/19007/19008), not scan detection — correlation, not causation.
+**Initial result: Wazuh did NOT detect the scan.** Wazuh is **host-based** — it
+analyses logs on the endpoint and has no packet visibility, so a raw SYN scan
+produces no Wazuh alert. The activity on the agent during the nmap window was
+routine **CIS/SCA configuration re-checks** (19004/19007/19008), not scan
+detection.
 
-> [!NOTE] Architectural gap (worth stating, not hiding)
-> Detecting network-level reconnaissance (port scans, sweeps) needs a **network
-> IDS** such as Suricata or Zeek feeding Wazuh, or firewall/connection logs
-> shipped to the agent. This lab is host-based by design, so that class of
-> attack is out of scope for it — a good example of knowing what your tooling
-> can and cannot see.
+**Fix: added Suricata (network IDS) feeding Wazuh.** See Phase 7 below. After
+integration the same nmap scan is detected end-to-end: Suricata flags the SYN
+sweep, its `eve.json` is ingested by the Wazuh agent, and Wazuh fires rule
+**86601** (`Suricata: Alert - … port scan`) with `src_ip 10.66.66.10` (Kali).
+
+> [!TIP] The lesson that matters
+> A host-based SIEM structurally cannot see network recon. Recognising that and
+> closing it with the right tool (a network IDS) is the skill — not pretending
+> the host-based SIEM caught something it can't.
 
 ### 4.3 Attack 2 — SSH brute force → detected ✅
 
@@ -465,10 +468,11 @@ Dashboard (`rule.id: 100100`): **4 live alerts**, level 10, from mr-axe — the 
 | Access to `diag.php` | ✅ (custom) | **100100** | 10 |
 | File tamper + SUID bit set | ✅ (realtime FIM) | 554, 550 (perm → SUID) | 7 |
 | Privileged command (`sudo`) | ✅ | 5402 (full command logged) | 3 |
-| Port scan (nmap) | ❌ | — (host-based SIEM, no network sensor) | — |
+| Port scan (nmap) | ✅ (via Suricata) | 86601 + custom sig 1000001 | 3 |
 
-Honest framing: five attack *techniques* detected, one class (network scanning)
-**not** — because Wazuh is host-based. See 4.2 for the architectural reason.
+Six attack techniques detected across **two layers**: host-based (Wazuh agent)
+and network-based (Suricata IDS → Wazuh). The port scan was initially a gap in
+the host-based design, then closed by adding Suricata (Phase 7).
 
 ---
 
@@ -491,7 +495,67 @@ Honest framing: five attack *techniques* detected, one class (network scanning)
 ### What this project demonstrates
 - Standing up a full SIEM (Wazuh all-in-one) on an isolated network.
 - Enrolling agents and proving traffic stays on the isolated segment.
-- Detecting five distinct attack types, mapped to MITRE ATT&CK.
-- **Writing and validating a custom detection rule** (detection engineering).
+- Detecting six distinct attack types across host + network layers, mapped to MITRE ATT&CK.
+- **Writing and validating custom detection rules** — a Wazuh rule *and* a Suricata signature (detection engineering).
+- **Identifying an architectural blind spot and closing it** (host-based SIEM → added network IDS).
 - Real troubleshooting: wrong Apache log path, periodic-vs-realtime FIM,
-  credential hygiene, agent connectivity — documented honestly.
+  credential hygiene, agent connectivity, Suricata capture interface — documented honestly.
+
+---
+
+## Phase 7 — Network IDS: closing the port-scan gap (2026-10-01) ✅
+
+The host-based SIEM couldn't see network recon (4.2). Added **Suricata** on the
+target to give the lab network-layer visibility, feeding Wazuh.
+
+### 7.1 Install & point at the lab interface
+
+```bash
+# DEBIAN (mr-axe) — target has two NICs; the lab one is enp7s0 (10.66.66.20)
+sudo apt-get install -y suricata jq
+sudo suricata-update                                   # pull ET Open rules
+sudo sed -i '0,/interface: eth0/s//interface: enp7s0/' /etc/suricata/suricata.yaml
+```
+`HOME_NET` already covered `10.0.0.0/8`, so no change needed there.
+
+### 7.2 Custom scan signature
+
+Default rules don't reliably flag a quiet SYN scan, so a deterministic signature
+was added — fires when one source sends 20+ SYNs in 10 s:
+
+```
+alert tcp any any -> $HOME_NET any (msg:"LOCAL Possible TCP port scan - SYN sweep from single source"; \
+  flags:S,12; threshold: type both, track by_src, count 20, seconds 10; \
+  classtype:attempted-recon; sid:1000001; rev:1;)
+```
+Validated with `suricata -T` (dedupe the `local.rules` include first, or you get
+a "duplicate signature" error).
+
+### 7.3 Feed Suricata into Wazuh
+
+```xml
+<!-- added to /var/ossec/etc/ossec.conf on the target agent -->
+<localfile>
+  <log_format>json</log_format>
+  <location>/var/log/suricata/eve.json</location>
+</localfile>
+```
+Wazuh ships built-in Suricata decoders, so `eve.json` alerts are parsed automatically.
+
+### 7.4 Verified end-to-end
+
+```bash
+# KALI
+sudo nmap -sS -p- 10.66.66.20
+```
+Result — the scan surfaced as a Wazuh alert:
+```json
+"rule": {"description":"Suricata: Alert - LOCAL Possible TCP port scan ...","id":"86601","groups":["ids","suricata"]}
+"data": {"in_iface":"enp7s0","src_ip":"10.66.66.10","dest_ip":"10.66.66.20","alert":{"signature_id":"1000001"}}
+```
+Source confirmed as Kali (`10.66.66.10`). The lab now detects at **two layers**.
+
+> [!NOTE] Trade-off recorded honestly
+> The default Wazuh Suricata rule fires at level 3. Fine for proving detection;
+> a custom Wazuh rule could escalate recon alerts if desired. Also bumped the
+> target VM to 2 GB RAM — Suricata with a full rule set is memory-hungry.
