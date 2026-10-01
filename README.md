@@ -74,9 +74,10 @@ This is the SIEM-tuning a SOC does for its own crown-jewel assets — see
 | 1. Build Wazuh VM (Ubuntu 24.04, dual NIC) | ✅ Done |
 | 2. Install Wazuh all-in-one (4.14.8) | ✅ Done |
 | 3. Enroll agents (Kali, target) | ✅ Done |
-| 4. Attack & detect (5/5) | ✅ Done |
+| 4. Attack & detect (6/6) | ✅ Done |
 | 5. Custom detection rule | ✅ Done |
 | 6. Write-up, screenshots, published | ✅ Done |
+| 7. Network IDS (Suricata) — close port-scan gap | ✅ Done |
 
 ## Repository layout
 
@@ -86,11 +87,12 @@ wazuh-soc-lab/
 ├── docs/
 │   └── BUILD_LOG.md       # step-by-step build log, including problems and fixes
 ├── configs/
-│   └── agent-ossec-snippets.conf   # sanitized agent config additions
+│   ├── agent-ossec-snippets.conf   # sanitized agent config additions
+│   └── suricata-notes.md           # Suricata IDS setup + custom scan signature
 ├── rules/
 │   └── local_rules.xml    # custom Wazuh detection rule (id 100100)
 └── screenshots/           # dashboard evidence, one folder per attack
-    ├── 01-portscan/
+    ├── 01-portscan/       # incl. Suricata detection (rule 86601)
     ├── 02-ssh-bruteforce/
     ├── 03-web-attack/
     ├── 04-fim/
