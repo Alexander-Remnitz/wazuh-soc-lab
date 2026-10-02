@@ -96,7 +96,8 @@ wazuh-soc-lab/
     ├── 02-ssh-bruteforce/
     ├── 03-web-attack/
     ├── 04-fim/
-    └── 05-custom-rule/
+    ├── 05-custom-rule/
+    └── 06-privileged-command/     # live rule 5402 verification record
 ```
 
 ## Key lessons (documented in the build log)

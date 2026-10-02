@@ -295,7 +295,7 @@ sudo virsh snapshot-create-as mr.axe wazuh-agent-installed "CTF box with Wazuh a
 
 ---
 
-## Phase 4 — Attack & detect (2026-09-30) — 4/5 done
+## Phase 4 — Attack & detect (2026-09-30 to 2026-10-02) — 6/6 verified
 
 ### 4.1 Enter "play" state
 
@@ -481,7 +481,7 @@ the host-based design, then closed by adding Suricata (Phase 7).
 - `rules/local_rules.xml` — the custom rule, committed to the repo.
 - `configs/agent-ossec-snippets.conf` — the Apache-log + realtime-FIM additions
   made on the target agent (sanitized).
-- `screenshots/` — dashboard evidence per attack (01–05).
+- `screenshots/` — detection evidence for all six detections (01–06); privileged-command rule 5402 was re-verified live on 2026-10-02.
 
 ---
 
